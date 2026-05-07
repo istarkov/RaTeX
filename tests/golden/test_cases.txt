@@ -993,3 +993,4 @@ f^{(n)}(x) = \dfrac{\mathrm{d}^n f}{\mathrm{d}x^n}
 \begin{gather} a=b \\ c=d \end{gather}
 \begin{align} x &= 1 \nonumber \\ y &= 2 \end{align}
 \begin{align} x &= 1 \tag{custom} \\ y &= 2 \end{align}
+\displaystyle \iiint_{-\infty}^{infty}
