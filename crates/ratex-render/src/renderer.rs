@@ -702,10 +702,8 @@ fn render_line(
             }
             cur_x += period;
         }
-    } else {
-        if let Some(rect) = tiny_skia::Rect::from_xywh(x, y - t / 2.0, width, t) {
-            pixmap.fill_rect(rect, &paint, Transform::identity(), None);
-        }
+    } else if let Some(rect) = tiny_skia::Rect::from_xywh(x, y - t / 2.0, width, t) {
+        pixmap.fill_rect(rect, &paint, Transform::identity(), None);
     }
 }
 
