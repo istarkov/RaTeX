@@ -999,3 +999,37 @@ f^{(n)}(x) = \dfrac{\mathrm{d}^n f}{\mathrm{d}x^n}
 \left( \htmlStyle{color: red;}{x \middle| y} \right)
 \htmlStyle{color: red;}{x}^2
 a \htmlStyle{color: red;}{+} b
+⟦ x ⟧
+⦃ y ⦄
+⦵
+⩴
+\int_a^b f\,dx \quad ∫ f
+∬ f
+∭ g
+∮ \mathbf{F}\cdot d\mathbf{r}
+∯ h
+∰ k
+⟂
+‼
+©
+®
+⌜ x ⌝
+⌞ x ⌟
+∷
+∹
+≔
+≕
+≘
+≙
+≚
+≛
+≝
+≞
+≟
+\textcopyright
+\tmspace+{3mu}{.1667em}a
+a · b
+\text{·}
+\sout{abc}
+\text{\sout{abc}}
+\sout{x^2}
