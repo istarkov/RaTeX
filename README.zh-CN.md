@@ -166,7 +166,11 @@ cargo build --release
 
 ### 渲染为 PNG · SVG · PDF
 
-编译 CLI：
+预编译二进制：
+
+[GitHub Releases](https://github.com/erweixin/RaTeX/releases) 提供预编译 CLI 压缩包。选择与目标操作系统和 CPU 架构匹配的版本并解压即可。预编译二进制已内嵌 KaTeX 字体，无需再传 `--font-dir`。
+
+从源码编译 CLI：
 
 ```bash
 cargo build --release -p ratex-render

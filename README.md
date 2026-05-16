@@ -166,7 +166,11 @@ cargo build --release
 
 ### Render to PNG · SVG · PDF
 
-Build the CLI binaries:
+Prebuilt binaries:
+
+[GitHub Releases](https://github.com/erweixin/RaTeX/releases) provides prebuilt CLI archives. Select the archive that matches the target operating system and CPU architecture, then extract it. The prebuilt binaries bundle KaTeX fonts, so `--font-dir` is not required.
+
+Build the CLI binaries from source:
 
 ```bash
 cargo build --release -p ratex-render
