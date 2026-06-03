@@ -86,8 +86,10 @@ pub fn render_to_cairo(
                     .or_insert_with(|| FontId::parse(font).unwrap_or(FontId::MainRegular));
                 render_glyph(
                     cr,
-                    *x as f32 * em + pad,
-                    *y as f32 * em + pad,
+                    Point {
+                        x: *x as f32 * em + pad,
+                        y: *y as f32 * em + pad,
+                    },
                     font_id,
                     *char_code,
                     *color,
@@ -172,8 +174,7 @@ fn sfnt_collection_index(id: FontId) -> u32 {
 
 fn render_glyph(
     cr: &cairo::Context,
-    px: f32,
-    py: f32,
+    point: Point,
     font_id: FontId,
     char_code: u32,
     color: Color,
@@ -191,18 +192,27 @@ fn render_glyph(
     let glyph_id = font.glyph_id(ch);
 
     if glyph_id.0 == 0 {
-        let _ = try_system_unicode_fallback(cr, px, py, ch, color, em, font_cache, false)?;
+        let _ = try_system_unicode_fallback(
+            cr,
+            point,
+            ch,
+            color,
+            em,
+            font_cache,
+            FallbackOptions {
+                skip_main_regular: false,
+            },
+        )?;
         return Ok(());
     }
 
     if font_id == FontId::EmojiFallback {
-        if try_draw_emoji_png(cr, px, py, em, ch)? {
+        if try_draw_emoji_png(cr, point, em, ch)? {
             return Ok(());
         }
         if render_glyph_with_font(
             cr,
-            px,
-            py,
+            point,
             FontGlyph {
                 font_id,
                 font,
@@ -218,8 +228,7 @@ fn render_glyph(
     if font_id == FontId::CjkRegular {
         if render_glyph_with_font(
             cr,
-            px,
-            py,
+            point,
             FontGlyph {
                 font_id,
                 font,
@@ -230,7 +239,7 @@ fn render_glyph(
         )? {
             return Ok(());
         }
-        if try_draw_emoji_or_outline(cr, px, py, ch, color, em, font_cache)? {
+        if try_draw_emoji_or_outline(cr, point, ch, color, em, font_cache)? {
             return Ok(());
         }
         if let Some(fallback_font) = font_cache.get(&FontId::CjkFallback) {
@@ -238,8 +247,7 @@ fn render_glyph(
             if fallback_id.0 != 0 {
                 let _ = render_glyph_with_font(
                     cr,
-                    px,
-                    py,
+                    point,
                     FontGlyph {
                         font_id: FontId::CjkFallback,
                         font: fallback_font,
@@ -256,8 +264,7 @@ fn render_glyph(
     if font_id == FontId::CjkFallback {
         if render_glyph_with_font(
             cr,
-            px,
-            py,
+            point,
             FontGlyph {
                 font_id,
                 font,
@@ -268,14 +275,13 @@ fn render_glyph(
         )? {
             return Ok(());
         }
-        let _ = try_draw_emoji_or_outline(cr, px, py, ch, color, em, font_cache)?;
+        let _ = try_draw_emoji_or_outline(cr, point, ch, color, em, font_cache)?;
         return Ok(());
     }
 
     if render_glyph_with_font(
         cr,
-        px,
-        py,
+        point,
         FontGlyph {
             font_id,
             font,
@@ -288,28 +294,47 @@ fn render_glyph(
     }
 
     let skip_main = font_id == FontId::MainRegular;
-    let _ = try_system_unicode_fallback(cr, px, py, ch, color, em, font_cache, skip_main)?;
+    let _ = try_system_unicode_fallback(
+        cr,
+        point,
+        ch,
+        color,
+        em,
+        font_cache,
+        FallbackOptions {
+            skip_main_regular: skip_main,
+        },
+    )?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FallbackOptions {
+    skip_main_regular: bool,
 }
 
 fn try_system_unicode_fallback(
     cr: &cairo::Context,
-    px: f32,
-    py: f32,
+    point: Point,
     ch: char,
     color: Color,
     em: f32,
     font_cache: &HashMap<FontId, FontRef<'_>>,
-    skip_main_regular: bool,
+    options: FallbackOptions,
 ) -> Result<bool, CairoError> {
-    if !skip_main_regular {
+    if !options.skip_main_regular {
         if let Some(font) = font_cache.get(&FontId::MainRegular) {
             let glyph_id = font.glyph_id(ch);
             if glyph_id.0 != 0
                 && render_glyph_with_font(
                     cr,
-                    px,
-                    py,
+                    point,
                     FontGlyph {
                         font_id: FontId::MainRegular,
                         font,
@@ -329,8 +354,7 @@ fn try_system_unicode_fallback(
         if glyph_id.0 != 0
             && render_glyph_with_font(
                 cr,
-                px,
-                py,
+                point,
                 FontGlyph {
                     font_id: FontId::CjkRegular,
                     font,
@@ -344,7 +368,7 @@ fn try_system_unicode_fallback(
         }
     }
 
-    if try_draw_emoji_or_outline(cr, px, py, ch, color, em, font_cache)? {
+    if try_draw_emoji_or_outline(cr, point, ch, color, em, font_cache)? {
         return Ok(true);
     }
 
@@ -353,8 +377,7 @@ fn try_system_unicode_fallback(
         if glyph_id.0 != 0
             && render_glyph_with_font(
                 cr,
-                px,
-                py,
+                point,
                 FontGlyph {
                     font_id: FontId::CjkFallback,
                     font,
@@ -373,14 +396,13 @@ fn try_system_unicode_fallback(
 
 fn try_draw_emoji_or_outline(
     cr: &cairo::Context,
-    px: f32,
-    py: f32,
+    point: Point,
     ch: char,
     color: Color,
     em: f32,
     font_cache: &HashMap<FontId, FontRef<'_>>,
 ) -> Result<bool, CairoError> {
-    if try_draw_emoji_png(cr, px, py, em, ch)? {
+    if try_draw_emoji_png(cr, point, em, ch)? {
         return Ok(true);
     }
 
@@ -389,8 +411,7 @@ fn try_draw_emoji_or_outline(
         if glyph_id.0 != 0 {
             return render_glyph_with_font(
                 cr,
-                px,
-                py,
+                point,
                 FontGlyph {
                     font_id: FontId::EmojiFallback,
                     font,
@@ -413,8 +434,7 @@ struct FontGlyph<'a> {
 
 fn render_glyph_with_font(
     cr: &cairo::Context,
-    px: f32,
-    py: f32,
+    point: Point,
     glyph: FontGlyph<'_>,
     color: Color,
     em: f32,
@@ -436,42 +456,47 @@ fn render_glyph_with_font(
     if glyph.font_id == FontId::EmojiFallback {
         let actual_advance = glyph.font.h_advance_unscaled(glyph.glyph_id);
         let actual_advance_em = actual_advance / units_per_em;
-        if actual_advance_em > 0.01 && actual_advance_em > 1.01 {
+        if actual_advance_em > 1.01 {
             scale *= 1.0 / actual_advance_em;
         }
     }
 
-    append_outline_path(cr, &curves, px, py, scale);
+    cr.save()
+        .map_err(|err| CairoError::Cairo(err.to_string()))?;
+    cr.set_fill_rule(cairo::FillRule::Winding);
+    append_outline_path(cr, &curves, point, scale);
     set_source_color(cr, color);
     cr.fill()
+        .map_err(|err| CairoError::Cairo(err.to_string()))?;
+    cr.restore()
         .map_err(|err| CairoError::Cairo(err.to_string()))?;
     Ok(true)
 }
 
-fn append_outline_path(cr: &cairo::Context, curves: &[OutlineCurve], px: f32, py: f32, scale: f32) {
+fn append_outline_path(cr: &cairo::Context, curves: &[OutlineCurve], point: Point, scale: f32) {
     let mut last_end: Option<(f32, f32)> = None;
 
     for curve in curves {
         let (start, end) = match curve {
             OutlineCurve::Line(p0, p1) => {
-                let sx = px + p0.x * scale;
-                let sy = py - p0.y * scale;
-                let ex = px + p1.x * scale;
-                let ey = py - p1.y * scale;
+                let sx = point.x + p0.x * scale;
+                let sy = point.y - p0.y * scale;
+                let ex = point.x + p1.x * scale;
+                let ey = point.y - p1.y * scale;
                 ((sx, sy), (ex, ey))
             }
             OutlineCurve::Quad(p0, _, p2) => {
-                let sx = px + p0.x * scale;
-                let sy = py - p0.y * scale;
-                let ex = px + p2.x * scale;
-                let ey = py - p2.y * scale;
+                let sx = point.x + p0.x * scale;
+                let sy = point.y - p0.y * scale;
+                let ex = point.x + p2.x * scale;
+                let ey = point.y - p2.y * scale;
                 ((sx, sy), (ex, ey))
             }
             OutlineCurve::Cubic(p0, _, _, p3) => {
-                let sx = px + p0.x * scale;
-                let sy = py - p0.y * scale;
-                let ex = px + p3.x * scale;
-                let ey = py - p3.y * scale;
+                let sx = point.x + p0.x * scale;
+                let sy = point.y - p0.y * scale;
+                let ex = point.x + p3.x * scale;
+                let ey = point.y - p3.y * scale;
                 ((sx, sy), (ex, ey))
             }
         };
@@ -490,15 +515,18 @@ fn append_outline_path(cr: &cairo::Context, curves: &[OutlineCurve], px: f32, py
 
         match curve {
             OutlineCurve::Line(_, p1) => {
-                cr.line_to((px + p1.x * scale) as f64, (py - p1.y * scale) as f64);
+                cr.line_to(
+                    (point.x + p1.x * scale) as f64,
+                    (point.y - p1.y * scale) as f64,
+                );
             }
             OutlineCurve::Quad(p0, p1, p2) => {
-                let p0x = px + p0.x * scale;
-                let p0y = py - p0.y * scale;
-                let p1x = px + p1.x * scale;
-                let p1y = py - p1.y * scale;
-                let ex = px + p2.x * scale;
-                let ey = py - p2.y * scale;
+                let p0x = point.x + p0.x * scale;
+                let p0y = point.y - p0.y * scale;
+                let p1x = point.x + p1.x * scale;
+                let p1y = point.y - p1.y * scale;
+                let ex = point.x + p2.x * scale;
+                let ey = point.y - p2.y * scale;
                 let c1x = p0x + (2.0 / 3.0) * (p1x - p0x);
                 let c1y = p0y + (2.0 / 3.0) * (p1y - p0y);
                 let c2x = ex + (2.0 / 3.0) * (p1x - ex);
@@ -509,12 +537,12 @@ fn append_outline_path(cr: &cairo::Context, curves: &[OutlineCurve], px: f32, py
             }
             OutlineCurve::Cubic(_, p1, p2, p3) => {
                 cr.curve_to(
-                    (px + p1.x * scale) as f64,
-                    (py - p1.y * scale) as f64,
-                    (px + p2.x * scale) as f64,
-                    (py - p2.y * scale) as f64,
-                    (px + p3.x * scale) as f64,
-                    (py - p3.y * scale) as f64,
+                    (point.x + p1.x * scale) as f64,
+                    (point.y - p1.y * scale) as f64,
+                    (point.x + p2.x * scale) as f64,
+                    (point.y - p2.y * scale) as f64,
+                    (point.x + p3.x * scale) as f64,
+                    (point.y - p3.y * scale) as f64,
                 );
             }
         }
@@ -529,8 +557,7 @@ fn append_outline_path(cr: &cairo::Context, curves: &[OutlineCurve], px: f32, py
 
 fn try_draw_emoji_png(
     cr: &cairo::Context,
-    px: f32,
-    py: f32,
+    point: Point,
     em: f32,
     ch: char,
 ) -> Result<bool, CairoError> {
@@ -542,12 +569,12 @@ fn try_draw_emoji_png(
     let ppm = f32::from(strike.pixels_per_em.max(1));
     let mut scale = em / ppm;
     let actual_width_em = f32::from(strike.width) / ppm;
-    if actual_width_em > 0.01 && actual_width_em > 1.01 {
+    if actual_width_em > 1.01 {
         scale *= 1.0 / actual_width_em;
     }
 
-    let top_x = px + f32::from(strike.x) * scale;
-    let mut top_y = py - (f32::from(strike.y) + f32::from(strike.height)) * scale;
+    let top_x = point.x + f32::from(strike.x) * scale;
+    let mut top_y = point.y - (f32::from(strike.y) + f32::from(strike.height)) * scale;
     let center_strike = (f32::from(strike.y) + f32::from(strike.height) / 2.0) / ppm;
     let axis = ratex_font::get_global_metrics(0).axis_height as f32;
     top_y += (center_strike - axis) * em;

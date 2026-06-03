@@ -38,6 +38,7 @@ struct FormulaState {
     color: Option<gdk::RGBA>,
     font_dir: Option<PathBuf>,
     display_list: Option<DisplayList>,
+    themed_display_list: Option<(Color, DisplayList)>,
     error_message: Option<String>,
     metrics: FormulaMetrics,
 }
@@ -52,6 +53,7 @@ impl Default for FormulaState {
             color: None,
             font_dir: None,
             display_list: None,
+            themed_display_list: None,
             error_message: None,
             metrics: FormulaMetrics::default(),
         }
@@ -226,17 +228,39 @@ impl WidgetImpl for RatexFormula {
         let bounds = gtk::graphene::Rect::new(0.0, 0.0, width, height);
         let cr = snapshot.append_cairo(&bounds);
 
-        let state = self.state.borrow();
-        let Some(display_list) = state.display_list.as_ref() else {
-            return;
-        };
-
+        let mut state = self.state.borrow_mut();
         let options = CairoOptions {
             font_size: state.font_size,
             padding: state.padding,
             font_dir: state.font_dir.clone(),
         };
-        let _ = render_to_cairo(&cr, display_list, &options);
+        let render_list = if state.color.is_none() {
+            let theme_color = color_from_rgba(obj.style_context().color());
+            let needs_relayout = !matches!(
+                state.themed_display_list.as_ref(),
+                Some((cached_color, _)) if *cached_color == theme_color
+            );
+            if needs_relayout {
+                if let Ok(display_list) =
+                    layout_display_list(&state.latex, state.display_mode, theme_color)
+                {
+                    state.themed_display_list = Some((theme_color, display_list));
+                }
+            }
+            state
+                .themed_display_list
+                .as_ref()
+                .map(|(_, display_list)| display_list)
+                .or(state.display_list.as_ref())
+        } else {
+            state.display_list.as_ref()
+        };
+        let Some(render_list) = render_list.cloned() else {
+            return;
+        };
+        drop(state);
+
+        let _ = render_to_cairo(&cr, &render_list, &options);
     }
 }
 
@@ -267,11 +291,13 @@ impl RatexFormula {
         match result {
             Ok((display_list, metrics)) => {
                 state.display_list = Some(display_list);
+                state.themed_display_list = None;
                 state.error_message = None;
                 state.metrics = metrics;
             }
             Err(message) => {
                 state.display_list = None;
+                state.themed_display_list = None;
                 state.error_message = Some(message);
                 state.metrics = FormulaMetrics::default();
             }
@@ -302,16 +328,8 @@ fn layout_formula(
         return Ok((DisplayList::default(), FormulaMetrics::default()));
     }
 
-    let ast = parse(latex).map_err(|err| format!("Parse error: {err}"))?;
-    let style = if display_mode {
-        MathStyle::Display
-    } else {
-        MathStyle::Text
-    };
     let color = color.map(color_from_rgba).unwrap_or(Color::BLACK);
-    let layout_options = LayoutOptions::default().with_style(style).with_color(color);
-    let layout_box = layout(&ast, &layout_options);
-    let display_list = to_display_list(&layout_box);
+    let display_list = layout_display_list(latex, display_mode, color)?;
     let metrics = measure_display_list(
         &display_list,
         &CairoOptions {
@@ -331,6 +349,55 @@ fn layout_formula(
     ))
 }
 
+fn layout_display_list(
+    latex: &str,
+    display_mode: bool,
+    default_color: Color,
+) -> Result<DisplayList, String> {
+    if latex.trim().is_empty() {
+        return Ok(DisplayList::default());
+    }
+
+    let ast = parse(latex).map_err(|err| format!("Parse error: {err}"))?;
+    let style = if display_mode {
+        MathStyle::Display
+    } else {
+        MathStyle::Text
+    };
+    let layout_options = LayoutOptions::default()
+        .with_style(style)
+        .with_color(default_color);
+    let layout_box = layout(&ast, &layout_options);
+    Ok(to_display_list(&layout_box))
+}
+
 fn color_from_rgba(rgba: gdk::RGBA) -> Color {
     Color::new(rgba.red(), rgba.green(), rgba.blue(), rgba.alpha())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratex_types::DisplayItem;
+
+    #[test]
+    fn default_color_does_not_override_explicit_black() {
+        let theme_color = Color::rgb(1.0, 0.0, 0.0);
+        let display_list = layout_display_list(r"x + \textcolor{black}{y}", true, theme_color)
+            .expect("formula should layout");
+
+        let colors: Vec<Color> = display_list
+            .items
+            .iter()
+            .map(|item| match item {
+                DisplayItem::GlyphPath { color, .. }
+                | DisplayItem::Line { color, .. }
+                | DisplayItem::Rect { color, .. }
+                | DisplayItem::Path { color, .. } => *color,
+            })
+            .collect();
+
+        assert!(colors.contains(&theme_color));
+        assert!(colors.contains(&Color::BLACK));
+    }
 }

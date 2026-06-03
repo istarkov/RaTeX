@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use gtk::gdk;
 use gtk::glib;
+use gtk::glib::translate::{IntoGlib, IntoGlibPtr};
 use gtk::prelude::*;
 use gtk::subclass::prelude::ObjectSubclassIsExt;
 use gtk4 as gtk;
@@ -85,3 +86,36 @@ impl Default for RatexFormula {
 }
 
 pub use imp::FormulaMetrics;
+
+fn ensure_gtk_initialized_for_c() -> bool {
+    if gtk::is_initialized_main_thread() {
+        return true;
+    }
+
+    unsafe {
+        if gtk::glib::translate::from_glib::<_, bool>(gtk::ffi::gtk_is_initialized()) {
+            // C/GI applications initialize GTK themselves. Bridge that state into gtk-rs
+            // without taking ownership of application initialization here.
+            gtk::set_initialized();
+            return true;
+        }
+    }
+
+    false
+}
+
+#[no_mangle]
+pub extern "C" fn ratex_formula_get_type() -> glib::ffi::GType {
+    if !ensure_gtk_initialized_for_c() {
+        return 0;
+    }
+    RatexFormula::static_type().into_glib()
+}
+
+#[no_mangle]
+pub extern "C" fn ratex_formula_new() -> *mut gtk::ffi::GtkWidget {
+    if !ensure_gtk_initialized_for_c() {
+        return std::ptr::null_mut();
+    }
+    unsafe { RatexFormula::new().upcast::<gtk::Widget>().into_glib_ptr() }
+}

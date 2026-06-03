@@ -41,7 +41,7 @@ RaTeX/
 ├── platforms/
 │   ├── ios/                      # Swift + XCFramework + CoreGraphics
 │   ├── android/                  # Kotlin + AAR + JNI/Canvas
-│   ├── gtk/                      # GTK4 Linux docs / examples / future GI packaging notes
+│   ├── gtk/                      # GTK4 Linux docs, C/GI metadata, and C/Python/Vala examples
 │   ├── flutter/                  # Dart FFI + widget
 │   ├── react-native/             # Native module + iOS/Android views
 │   └── web/                      # npm package `ratex-wasm`: WASM + TypeScript web-render
@@ -293,6 +293,8 @@ ratex-layout
     ↑
 platforms/ (ios, android, flutter, react-native, web)
 ```
+
+`platforms/gtk` contains the Linux desktop GObject package metadata for the `RatexGtk-1.0` namespace: the public C header, GIR file, Vala VAPI, pkg-config template, and C/Python/Vala smoke examples. The implementation lives in `crates/ratex-gtk4`.
 
 ---
 
