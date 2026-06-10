@@ -608,6 +608,18 @@ fn emit_path_segment(
         return;
     }
 
+    let alpha_applied = if fill {
+        apply_non_stroking_alpha(content, color, alpha_states)
+    } else {
+        apply_stroking_alpha(content, color, alpha_states)
+    };
+    if fill {
+        set_fill_rgb(content, color);
+    } else {
+        set_stroke_rgb(content, color);
+        content.set_line_width(stroke_width as f32);
+    }
+
     // Track current point for quad-to-cubic promotion.
     let mut cur = (0.0f32, 0.0f32);
 
@@ -666,17 +678,11 @@ fn emit_path_segment(
     }
 
     if fill {
-        let alpha_applied = apply_non_stroking_alpha(content, color, alpha_states);
-        set_fill_rgb(content, color);
         content.fill_even_odd();
-        restore_alpha_if_needed(content, alpha_applied);
     } else {
-        let alpha_applied = apply_stroking_alpha(content, color, alpha_states);
-        set_stroke_rgb(content, color);
-        content.set_line_width(stroke_width as f32);
         content.stroke();
-        restore_alpha_if_needed(content, alpha_applied);
     }
+    restore_alpha_if_needed(content, alpha_applied);
 }
 
 // ---------------------------------------------------------------------------

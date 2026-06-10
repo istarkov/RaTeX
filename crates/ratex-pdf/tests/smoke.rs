@@ -89,6 +89,19 @@ fn decoded_pdf_streams(pdf: &[u8]) -> Vec<String> {
     out
 }
 
+fn assert_ordered(content: &str, first: &str, second: &str) {
+    let first_ix = content
+        .find(first)
+        .unwrap_or_else(|| panic!("missing {first:?} in {content}"));
+    let second_ix = content
+        .find(second)
+        .unwrap_or_else(|| panic!("missing {second:?} in {content}"));
+    assert!(
+        first_ix < second_ix,
+        "expected {first:?} before {second:?} in {content}"
+    );
+}
+
 #[test]
 fn smoke_fraction_renders_valid_pdf() {
     let pdf = latex_to_pdf(r"\frac{1}{2}");
@@ -149,6 +162,36 @@ fn pdf_preserves_fill_and_stroke_alpha() {
     let content = decoded_pdf_streams(&pdf).join("\n");
     assert!(content.contains("/GS500000 gs"), "{content}");
     assert!(content.contains("/GS250000 gs"), "{content}");
+}
+
+#[test]
+fn pdf_applies_path_alpha_before_path_construction() {
+    let list = DisplayList {
+        width: 1.0,
+        height: 1.0,
+        depth: 0.0,
+        items: vec![DisplayItem::Path {
+            x: 0.0,
+            y: 0.0,
+            commands: vec![
+                PathCommand::MoveTo { x: 0.0, y: 0.0 },
+                PathCommand::LineTo { x: 1.0, y: 1.0 },
+            ],
+            fill: false,
+            color: Color::new(0.0, 0.0, 1.0, 0.25),
+        }],
+    };
+    let opts = PdfOptions {
+        font_dir: katex_font_dir(),
+        ..Default::default()
+    };
+    let pdf = render_to_pdf(&list, &opts).expect("render_to_pdf");
+    let content = decoded_pdf_streams(&pdf).join("\n");
+
+    assert_ordered(&content, "/GS250000 gs", " m");
+    assert_ordered(&content, " RG", " m");
+    assert_ordered(&content, " w", " m");
+    assert_ordered(&content, " m", "\nS");
 }
 
 #[test]

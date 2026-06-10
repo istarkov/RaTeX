@@ -42,6 +42,9 @@ impl Color {
     /// Parse a hex color string like "#ff0000", "#f00", "#ff000080", or "#f008".
     pub fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.strip_prefix('#').unwrap_or(hex);
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
         match hex.len() {
             3 => {
                 let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
@@ -245,6 +248,12 @@ mod tests {
         assert!(c.g.abs() < 0.01);
         assert!(c.b.abs() < 0.01);
         assert!((c.a - 16.0 / 255.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_non_ascii_color_returns_none() {
+        assert!(Color::parse("😀").is_none());
+        assert!(Color::from_hex("ééé").is_none());
     }
 
     #[test]
