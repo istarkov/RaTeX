@@ -3522,7 +3522,7 @@ fn layout_href(body: &[ParseNode], options: &LayoutOptions) -> LayoutBox {
     if box_contains_font(&body_box, FontId::TypewriterRegular) {
         layout_link_underline_laid_out(body_box, options, link_color)
     } else {
-        body_box
+        layout_underline_laid_out(body_box, options, link_color)
     }
 }
 

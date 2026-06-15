@@ -69,6 +69,19 @@ fn htmlstyle_applies_supported_css() {
 }
 
 #[test]
+fn href_non_typewriter_body_keeps_link_underline() {
+    let ast = parse("\\href{https://example.com}{x}").unwrap();
+    let options = LayoutOptions::default();
+    let lbox = layout(&ast, &options);
+    let display = to_display_list(&lbox);
+
+    assert!(display.items.iter().any(|item| matches!(
+        item,
+        DisplayItem::Line { color, .. } if *color == Color::from_name("blue").unwrap()
+    )));
+}
+
+#[test]
 fn prooftree_binary_emits_inference_rule() {
     let ast = parse("\\begin{prooftree}\\AxiomC{P}\\AxiomC{Q}\\BinaryInfC{R}\\end{prooftree}").unwrap();
     let options = LayoutOptions::default();
