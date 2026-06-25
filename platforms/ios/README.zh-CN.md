@@ -1,6 +1,6 @@
-# RaTeX — iOS 集成说明
+# RaTeX — Apple 集成说明
 
-通过 Swift 与 CoreGraphics 在 iOS 上原生渲染 LaTeX 数学公式。  
+通过 Swift 与 CoreGraphics 在 iOS 和 macOS 上原生渲染 LaTeX 数学公式。
 无 WebView、无 JavaScript、无 DOM。
 
 ---
@@ -14,7 +14,7 @@ JSON DisplayList
     ↓ RaTeXEngine.parse()       [Swift JSON 解码]
 DisplayList
     ↓ RaTeXRenderer.draw()      [CoreGraphics]
-UIView / SwiftUI View
+UIView / NSView / SwiftUI View
 ```
 
 ---
@@ -29,7 +29,7 @@ UIView / SwiftUI View
    ```
    **可选**：若希望在启动时提前加载字体（例如避免首屏公式略有延迟），可在 App 启动时调用 `RaTeXFontLoader.loadFromPackageBundle()`。
 
-**本地开发**（修改 RaTeX 源码时）：先在本仓库根目录执行 `bash platforms/ios/build-ios.sh`，再在 Xcode 里 **File → Add Package Dependencies → Add Local…** 选择 RaTeX 仓库根目录即可。
+**本地开发**（修改 RaTeX 源码时）：iOS-only 可先执行 `bash platforms/ios/build-ios.sh`；如果要验证 macOS SPM 集成，请执行 `bash scripts/build-apple-xcframework.sh`，再在 Xcode 里 **File → Add Package Dependencies → Add Local…** 选择 RaTeX 仓库根目录。
 
 ---
 
@@ -40,11 +40,13 @@ UIView / SwiftUI View
 | Xcode | 15+ |
 | Rust | 1.75+（rustup） |
 | iOS 目标 | 14+ |
+| macOS 目标 | 14+ |
 
-安装 Rust iOS 目标（一次性）：
+安装 Rust Apple 目标（一次性）：
 
 ```bash
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ```
 
 ---
@@ -54,16 +56,16 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 在仓库根目录执行：
 
 ```bash
-bash platforms/ios/build-ios.sh
+bash scripts/build-apple-xcframework.sh
 ```
 
-将生成仅含 **iOS** 切片的 `platforms/ios/RaTeX.xcframework`。
+将生成同时包含 **iOS** 和 **macOS** 切片的 `platforms/ios/RaTeX.xcframework`。
 
-> 若用于 React Native macOS（需要同时包含 macOS 切片），请改用：
->
-> ```bash
-> bash scripts/build-apple-xcframework.sh
-> ```
+如果只需要本地 iOS 产物，可使用兼容入口：
+
+```bash
+bash platforms/ios/build-ios.sh
+```
 
 ---
 
@@ -73,13 +75,15 @@ bash platforms/ios/build-ios.sh
 
 在 Xcode 中：**File → Add Package Dependencies**，输入 `https://github.com/erweixin/RaTeX`，选择 `RaTeX` 产品。
 
-**本地开发** — 先执行 `bash platforms/ios/build-ios.sh`，然后在 Xcode 中通过 **File → Add Package Dependencies → Add Local…** 指向仓库根目录。若为 React Native macOS 场景，请改用 `bash scripts/build-apple-xcframework.sh`。
+**本地开发** — iOS-only 可先执行 `bash platforms/ios/build-ios.sh`；macOS SPM 消费方请执行 `bash scripts/build-apple-xcframework.sh`，确保本地 binary target 包含 macOS 切片。然后在 Xcode 中通过 **File → Add Package Dependencies → Add Local…** 指向仓库根目录。
+
+可运行的 macOS SPM 集成验证示例见 `demo/spm-macos`。
 
 ### 方式 B — 手动集成
 
 1. 将 `platforms/ios/RaTeX.xcframework` 拖入 Xcode 项目。
 2. 在 **Build Phases → Link Binary With Libraries** 中确保已链接。
-3. 将 `platforms/ios/Sources/RaTeX/*.swift` 复制到你的项目中。
+3. 将 `platforms/ios/Sources/Ratex/*.swift` 复制到你的项目中，包括 `PlatformCompat.swift`。
 4. 将 `platforms/ios/Sources/Ratex/Fonts/` 下的 `Fonts` 文件夹加入 target 的 **Copy Bundle Resources**；字体会在首次渲染时自动加载，或在启动时调用 `RaTeXFontLoader.loadFromBundle()`。
 
 ---
@@ -197,7 +201,8 @@ renderer.draw(in: UIGraphicsGetCurrentContext()!)
 |------|------|
 | `build-ios.sh` | iOS-only 构建入口（委托统一 Apple 构建脚本） |
 | `Package.swift` | Swift Package 清单 |
-| `Sources/RaTeX/DisplayList.swift` | Rust 类型的 Codable Swift 镜像 |
-| `Sources/RaTeX/RaTeXEngine.swift` | 调用 C ABI、解码 JSON |
-| `Sources/RaTeX/RaTeXRenderer.swift` | CoreGraphics 绘制循环 |
-| `Sources/RaTeX/RaTeXView.swift` | UIKit `UIView` 与 SwiftUI `View` |
+| `Sources/Ratex/DisplayList.swift` | Rust 类型的 Codable Swift 镜像 |
+| `Sources/Ratex/PlatformCompat.swift` | UIKit/AppKit 兼容别名 |
+| `Sources/Ratex/RaTeXEngine.swift` | 调用 C ABI、解码 JSON |
+| `Sources/Ratex/RaTeXRenderer.swift` | CoreGraphics 绘制循环 |
+| `Sources/Ratex/RaTeXView.swift` | UIKit/AppKit view 与 SwiftUI `View` |

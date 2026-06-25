@@ -12,7 +12,9 @@ import UIKit
 
 private func ffiColor(from color: NSColor, appearance: NSAppearance? = nil) -> RatexColor {
     func resolve(_ c: NSColor) -> RatexColor {
-        let rgb = c.usingColorSpace(.sRGB) ?? c
+        guard let rgb = c.usingColorSpace(.sRGB) else {
+            return RatexColor(r: 0, g: 0, b: 0, a: 1)
+        }
         var r: CGFloat = 0
         var g: CGFloat = 0
         var b: CGFloat = 0
