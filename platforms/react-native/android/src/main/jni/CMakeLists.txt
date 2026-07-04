@@ -27,11 +27,47 @@ target_include_directories(
         ${LIB_ANDROID_GENERATED_COMPONENTS_DIR}
 )
 
-target_link_libraries(
-        ${LIB_TARGET_NAME}
-        fbjni
-        jsi
-        reactnative
-)
+# https://github.com/react-native-community/discussions-and-proposals/discussions/816
+# This if-then-else can be removed once this library does not support versions below 0.76
+if(REACTNATIVE_MERGED_SO)
+  target_link_libraries(
+          ${LIB_TARGET_NAME}
+          fbjni
+          jsi
+          reactnative
+  )
+else()
+  target_link_libraries(
+          ${LIB_TARGET_NAME}
+          fbjni
+          folly_runtime
+          glog
+          jsi
+          react_codegen_rncore
+          react_debug
+          react_nativemodule_core
+          react_render_core
+          react_render_debug
+          react_render_graphics
+          react_render_mapbuffer
+          react_render_componentregistry
+          react_utils
+          rrc_view
+          turbomodulejsijni
+          yoga
+  )
+endif()
 
-target_compile_reactnative_options(${LIB_TARGET_NAME} PRIVATE)
+# target_compile_reactnative_options only exists in React Native >= 0.80
+if(ReactAndroid_VERSION_MINOR GREATER_EQUAL 80)
+  target_compile_reactnative_options(${LIB_TARGET_NAME} PRIVATE)
+else()
+  target_compile_options(
+          ${LIB_TARGET_NAME}
+          PRIVATE
+          -fexceptions
+          -frtti
+          -std=c++20
+          -Wall
+  )
+endif()

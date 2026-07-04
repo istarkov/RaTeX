@@ -70,6 +70,9 @@ class RaTeXViewMeasuringShadowNode final : public RaTeXViewShadowNode {
       return layoutConstraints.clamp(facebook::react::Size{0, 0});
     }
     NSString *latex = [NSString stringWithUTF8String:props.latex.c_str()];
+    if (latex == nil) {
+      return layoutConstraints.clamp(facebook::react::Size{0, 0});
+    }
     CGSize measured = [RaTeXMeasure measureLatex:latex
                                         fontSize:static_cast<CGFloat>(props.fontSize)
                                      displayMode:props.displayMode ? YES : NO];

@@ -5,7 +5,6 @@
 
 namespace facebook::react {
 
-#ifdef RN_SERIALIZABLE_STATE
 // Serialize the props the Kotlin measure() needs. Color does not affect the
 // measured size, so it is intentionally omitted.
 inline folly::dynamic toDynamic(const RaTeXViewProps& props) {
@@ -15,6 +14,5 @@ inline folly::dynamic toDynamic(const RaTeXViewProps& props) {
   serializedProps["displayMode"] = props.displayMode;
   return serializedProps;
 }
-#endif
 
 } // namespace facebook::react

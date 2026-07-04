@@ -13,8 +13,12 @@ void RaTeXViewMeasuringShadowNode::setMeasurementManager(
 Size RaTeXViewMeasuringShadowNode::measureContent(
     const LayoutContext& layoutContext,
     const LayoutConstraints& layoutConstraints) const {
-  return measurementsManager_->measure(
-      getSurfaceId(), layoutConstraints, getConcreteProps());
+  const auto& props = getConcreteProps();
+  if (props.latex.empty() || props.fontSize <= 0) {
+    return layoutConstraints.clamp({0, 0});
+  }
+  return layoutConstraints.clamp(
+      measurementsManager_->measure(getSurfaceId(), layoutConstraints, props));
 }
 
 } // namespace facebook::react
