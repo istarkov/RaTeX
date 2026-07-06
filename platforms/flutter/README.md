@@ -259,7 +259,7 @@ the bounding box. The baseline is at Y = `height × fontSize`.
 | File | Purpose |
 |------|---------|
 | `pubspec.yaml` | Flutter plugin manifest |
-| `ios/` | iOS plugin (podspec + RaTeXPlugin.swift); links RaTeX.xcframework |
+| `ios/` | iOS plugin (CocoaPods podspec + SwiftPM package); links RaTeX.xcframework |
 | `android/` | Android plugin (RaTeXPlugin.kt); uses in-package `jniLibs` for `libratex_ffi.so` |
 | `macos/` | macOS plugin (podspec + RaTeXPlugin.swift); links universal `.dylib` |
 | `windows/` | Windows plugin (CMake + C++ stub); includes `ratex_ffi.dll` |
@@ -286,10 +286,11 @@ To publish an **out-of-the-box** package that works without building native code
    ```bash
    # From repo root
    ./platforms/ios/build-ios.sh
-   # If platforms/flutter/ios/RaTeX.xcframework is a symlink, replace with real copy:
-   rm -rf platforms/flutter/ios/RaTeX.xcframework
-   cp -R platforms/ios/RaTeX.xcframework platforms/flutter/ios/
+   # If the packaged XCFramework is a symlink, replace it with a real copy:
+   rm -rf platforms/flutter/ios/ratex_flutter/RaTeX.xcframework
+   cp -R platforms/ios/RaTeX.xcframework platforms/flutter/ios/ratex_flutter/
    ```
+   The same packaged XCFramework is used by both CocoaPods and SwiftPM.
 
 3. **Desktop** — Build and inject platform-specific native libs:
    ```bash

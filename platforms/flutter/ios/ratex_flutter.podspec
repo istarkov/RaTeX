@@ -15,16 +15,16 @@ Pod::Spec.new do |s|
   s.platform         = :ios, '13.0'
   s.swift_version    = '5.7'
 
-  s.source_files     = 'Classes/**/*.swift'
+  s.source_files     = 'ratex_flutter/Sources/ratex_flutter/**/*.swift'
 
   s.dependency 'Flutter'
 
   # Link the prebuilt xcframework — contains both device (arm64) and
   # simulator (arm64 + x86_64) slices.  CocoaPods copies the correct
   # slice at build time, so iOS Simulator "just works".
-  # The xcframework lives alongside this podspec so that Flutter's
-  # pub get copy to .symlinks/plugins/ carries it along automatically.
-  s.vendored_frameworks = 'RaTeX.xcframework'
+  # Keep the XCFramework inside the Swift package directory so Flutter's
+  # generated SwiftPM symlink can resolve it; CocoaPods shares the same copy.
+  s.vendored_frameworks = 'ratex_flutter/RaTeX.xcframework'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE'              => 'YES',

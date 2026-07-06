@@ -256,7 +256,7 @@ final dl = await compute(
 | 文件 | 说明 |
 |------|------|
 | `pubspec.yaml` | Flutter 插件清单 |
-| `ios/` | iOS 插件（podspec + RaTeXPlugin.swift）；链接 RaTeX.xcframework |
+| `ios/` | iOS 插件（CocoaPods podspec + SwiftPM package）；链接 RaTeX.xcframework |
 | `android/` | Android 插件（RaTeXPlugin.kt）；使用包内 `jniLibs` 中的 `libratex_ffi.so` |
 | `macos/` | macOS 插件（podspec + RaTeXPlugin.swift）；链接 universal `.dylib` |
 | `windows/` | Windows 插件（CMake + C++ 桩）；包含 `ratex_ffi.dll` |
@@ -283,10 +283,11 @@ final dl = await compute(
    ```bash
    # 在仓库根目录
    ./platforms/ios/build-ios.sh
-   # 若 platforms/flutter/ios/RaTeX.xcframework 为符号链接，替换为实体拷贝：
-   rm -rf platforms/flutter/ios/RaTeX.xcframework
-   cp -R platforms/ios/RaTeX.xcframework platforms/flutter/ios/
+   # 若包内的 XCFramework 为符号链接，替换为实体拷贝：
+   rm -rf platforms/flutter/ios/ratex_flutter/RaTeX.xcframework
+   cp -R platforms/ios/RaTeX.xcframework platforms/flutter/ios/ratex_flutter/
    ```
+   CocoaPods 与 SwiftPM 共用这个打包后的 XCFramework。
 
 3. **桌面平台** — 构建并注入各平台原生库：
    ```bash
