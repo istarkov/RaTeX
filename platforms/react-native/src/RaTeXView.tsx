@@ -5,9 +5,25 @@ import React, {
   useEffect,
   useState,
 } from 'react';
+import * as ReactNative from 'react-native';
 import {StyleSheet} from 'react-native';
 import type {ColorValue, StyleProp, ViewStyle} from 'react-native';
 import RaTeXViewNativeComponent from './RaTeXViewNativeComponent';
+
+// True inside <Text> (reset by nested <View>) — "am I an inline attachment".
+// Native code can't tell: Android Fabric hoists inline views into the text's
+// parent ViewGroup. Legacy module path covers RN without the unstable export.
+const TextAncestorContext: React.Context<boolean> =
+  (
+    ReactNative as unknown as {
+      unstable_TextAncestorContext?: React.Context<boolean>;
+    }
+  ).unstable_TextAncestorContext ??
+  (
+    require('react-native/Libraries/Text/TextAncestor') as {
+      default: React.Context<boolean>;
+    }
+  ).default;
 
 export const RaTeXColorContext = createContext<ColorValue | undefined>(undefined);
 
@@ -46,18 +62,25 @@ export interface RaTeXViewProps {
   }) => void;
 }
 
-// On the new architecture (Fabric) the native component self-sizes synchronously
-// during layout via the shadow node's measureContent, so feeding the async
-// onContentSizeChange measurement back as an explicit width/height style is
-// redundant — and actively harmful: the event carries the UNCONSTRAINED content
-// size, so re-applying it as an explicit style overrides whatever clamp the
-// parent imposed during the measured pass, one commit later. When the content
-// doesn't fit its container that disagreement is visible as a scale flip on
-// every update. The JS self-sizing pass exists only for the old architecture,
-// which has no shadow-node measure.
+// Fabric self-sizes via the shadow node's measureContent; feeding the async
+// (unconstrained) onContentSizeChange size back as a style would override
+// parent clamps a commit later. The JS self-sizing pass is old-arch only.
 const IS_FABRIC =
   (globalThis as {nativeFabricUIManager?: unknown}).nativeFabricUIManager !=
   null;
+
+// One standard style for both host contexts: as a flex sibling alignSelf is
+// plain Yoga (shadow baseline()); inside <Text> — where text layout ignores
+// alignSelf — it is forwarded as the native `inlineAlign` shift. Gated by
+// TextAncestorContext so the two contexts can't double-apply.
+const INLINE_ALIGN_FROM_ALIGN_SELF: Partial<
+  Record<string, 'baseline' | 'center' | 'start' | 'end'>
+> = {
+  baseline: 'baseline',
+  center: 'center',
+  'flex-start': 'start',
+  'flex-end': 'end',
+};
 
 export function RaTeXView({
   latex,
@@ -104,15 +127,22 @@ export function RaTeXView({
   const hasWidth = typeof flatStyle?.width === 'number';
   const hasHeight = typeof flatStyle?.height === 'number';
 
-  const resolvedStyle = contentSize
-    ? [
-        style,
-        {
+  const hasTextAncestor = useContext(TextAncestorContext);
+  const inlineAlign =
+    (hasTextAncestor &&
+      flatStyle?.alignSelf != null &&
+      INLINE_ALIGN_FROM_ALIGN_SELF[flatStyle.alignSelf]) ||
+    'none';
+
+  const resolvedStyle = [
+    style,
+    contentSize
+      ? {
           ...(hasWidth ? {} : {width: contentSize.width}),
           ...(hasHeight ? {} : {height: contentSize.height}),
-        },
-      ]
-    : style;
+        }
+      : null,
+  ];
 
   return (
     <RaTeXViewNativeComponent
@@ -120,6 +150,7 @@ export function RaTeXView({
       latex={latex}
       fontSize={fontSize}
       displayMode={displayMode}
+      inlineAlign={inlineAlign}
       color={resolvedColor}
       style={resolvedStyle}
       onError={onError}

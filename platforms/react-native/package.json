@@ -28,7 +28,7 @@
   "homepage": "https://github.com/erweixin/RaTeX",
   "codegenConfig": {
     "name": "RNRaTeXSpec",
-    "type": "components",
+    "type": "all",
     "jsSrcsDir": "src",
     "ios": {
       "componentProvider": {
