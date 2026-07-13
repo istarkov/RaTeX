@@ -27,7 +27,8 @@ import {
   useWindowDimensions,
   ScrollView,
 } from "react-native";
-import { InlineTeX, RaTeXView } from "ratex-react-native";
+import { InlineTeX, RaTeXView, getTexMetrics } from "ratex-react-native";
+import type { RaTeXTexMetrics, RaTeXViewRef } from "ratex-react-native";
 
 const EXPR = String.raw`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`;
 const EXPR2 = String.raw`\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}`;
@@ -1123,6 +1124,170 @@ function CaseYogaAligns() {
   );
 }
 
+// ─── ref.getTexMetrics(): drawn ink baseline for custom hosts ────────────────
+//
+// Hosts that do their own layout (markdown engines placing formulas over a
+// custom text view, canvas typesetters) can't use flex baseline or <Text>.
+// getTexMetrics() hands them the placement numbers synchronously in
+// useLayoutEffect. The green ruler is positioned purely from the returned
+// depth — it must kiss the ink baseline at every clamp width, because depth
+// is DRAWN: fit-scale and centering gap for the committed frame are already
+// applied (drawnDepth = gap + naturalDepth × scale).
+const METRICS_LATEX = String.raw`\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}`;
+const METRICS_WIDTHS = [undefined, 200, 140, 90] as const;
+
+function TexMetricsRow({ maxWidth }: { maxWidth?: number }) {
+  const ref = useRef<RaTeXViewRef>(null);
+  const [probe, setProbe] = useState<{
+    metrics: RaTeXTexMetrics;
+    frameHeight: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const metrics = ref.current?.getTexMetrics();
+    let frameHeight = 0;
+    ref.current?.measure((_x, _y, _w, h) => {
+      frameHeight = h; // sync on Fabric
+    });
+    setProbe(metrics && frameHeight > 0 ? { metrics, frameHeight } : null);
+  }, [maxWidth]);
+
+  return (
+    <View style={styles.metricsRow}>
+      <View style={styles.metricsBox}>
+        <RaTeXView
+          ref={ref}
+          latex={METRICS_LATEX}
+          fontSize={24}
+          displayMode={false}
+          color="#111827"
+          style={{ alignSelf: "flex-start", maxWidth }}
+        />
+        {probe && (
+          <View
+            style={[
+              styles.metricsBaseline,
+              { top: probe.frameHeight - probe.metrics.depth },
+            ]}
+          />
+        )}
+      </View>
+      <Text style={styles.metricsLabel}>
+        {maxWidth ? `maxWidth ${maxWidth}` : "natural"}
+        {probe
+          ? ` · scale ${probe.metrics.scale.toFixed(2)} · depth ${probe.metrics.depth.toFixed(1)}`
+          : " · …"}
+      </Text>
+    </View>
+  );
+}
+
+function CaseTexMetrics() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>
+          ref.getTexMetrics(): ink baseline for custom hosts
+        </Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        The green ruler is placed only from getTexMetrics().depth (top =
+        frameHeight − depth). It must sit on the ink baseline in every row —
+        including the clamped ones, where the drawn depth shrinks with scale.
+      </Text>
+      <View style={styles.inlineBody}>
+        {METRICS_WIDTHS.map((w) => (
+          <TexMetricsRow key={w ?? "natural"} maxWidth={w} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── getTexMetrics() perf: uncached vs cached, N unique formulas ─────
+const PERF_SIZES = [10, 50, 100, 200];
+const PERF_REPS = 5;
+
+// Every formula has the SAME shape/size (unique only via the embedded
+// nonce/index digits) so per-formula cost is comparable across N.
+function makePerfFormulas(n: number, nonce: number): string[] {
+  return Array.from(
+    { length: n },
+    (_, i) =>
+      String.raw`\frac{${nonce}x_{${i}} + \sqrt{${(i % 7) + 2}}}{y^{${(i % 5) + 2}} - ${nonce}} + \sum_{k=1}^{${(i % 4) + 2}} k^{${(i % 3) + 2}}`,
+  );
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+type PerfRow = { n: number; uncachedMs: number; cachedMs: number; failed: number };
+
+function CaseTexMetricsPerf() {
+  const [rows, setRows] = useState<PerfRow[] | null>(null);
+  const nonceRef = useRef(1);
+
+  const run = useCallback(() => {
+    // Warmup: ramps the CPU governor and JIT before anything is timed.
+    for (const f of makePerfFormulas(100, nonceRef.current++)) {
+      getTexMetrics(f, 16, false);
+    }
+    const out: PerfRow[] = [];
+    for (const n of PERF_SIZES) {
+      const uncached: number[] = [];
+      const cached: number[] = [];
+      let failed = 0;
+      for (let rep = 0; rep < PERF_REPS; rep++) {
+        const formulas = makePerfFormulas(n, nonceRef.current++);
+        const t0 = performance.now();
+        for (const f of formulas) {
+          if (!getTexMetrics(f, 16, false)) failed++;
+        }
+        const t1 = performance.now();
+        for (const f of formulas) {
+          getTexMetrics(f, 16, false);
+        }
+        uncached.push(t1 - t0);
+        cached.push(performance.now() - t1);
+      }
+      out.push({
+        n,
+        uncachedMs: median(uncached),
+        cachedMs: median(cached),
+        failed,
+      });
+    }
+    setRows(out);
+  }, []);
+
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>getTexMetrics() perf (global)</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        Warmup, then per N: 5 reps of (N unique formulas cold, same N again
+        cached); medians shown. Parse cache holds 128 entries — at N=200 the
+        second pass thrashes the LRU, so "cached" ≈ uncached there.
+      </Text>
+      <Pressable style={styles.button} onPress={run}>
+        <Text style={styles.buttonText}>Run perf test</Text>
+      </Pressable>
+      {rows && (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+          {rows.map((r) => (
+            <Text key={r.n} style={styles.perfLine}>
+              {`N=${String(r.n).padStart(3)}  uncached ${r.uncachedMs.toFixed(1)}ms (${(r.uncachedMs / r.n).toFixed(2)}/f)  cached ${r.cachedMs.toFixed(1)}ms (${(r.cachedMs / r.n).toFixed(3)}/f)${r.failed ? `  failed=${r.failed}` : ""}`}
+            </Text>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Case C: Explicit dimensions (control — should always work) ─────
 function CaseExplicit({ renderKey }: { renderKey: number }) {
   const [status, setStatus] = useState<"pending" | "ok" | "error">("pending");
@@ -1188,6 +1353,8 @@ export default function App() {
         <CaseInlineFontMix />
         <CaseInlineMaxWidth />
         <CaseYogaAligns />
+        <CaseTexMetrics />
+        <CaseTexMetricsPerf />
 
         <View style={styles.cases}>
           <CaseFlexMinHeight renderKey={key} />
@@ -1488,6 +1655,33 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     fontFamily: "Menlo",
     marginTop: 2,
+  },
+  metricsRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e7eb",
+  },
+  metricsBox: {
+    alignSelf: "flex-start",
+  },
+  metricsBaseline: {
+    position: "absolute",
+    left: -8,
+    right: -8,
+    height: 1,
+    backgroundColor: "#ffb981",
+  },
+  metricsLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontFamily: "Menlo",
+    marginTop: 4,
+  },
+  perfLine: {
+    fontSize: 11,
+    color: "#111827",
+    fontFamily: "Menlo",
+    marginTop: 4,
   },
   inlineParaText: {
     fontSize: INLINE_BASELINE_FONT_SIZE,

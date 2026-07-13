@@ -3,12 +3,15 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useImperativeHandle,
+  useRef,
   useState,
 } from 'react';
 import * as ReactNative from 'react-native';
 import {StyleSheet} from 'react-native';
 import type {ColorValue, StyleProp, ViewStyle} from 'react-native';
 import RaTeXViewNativeComponent from './RaTeXViewNativeComponent';
+import {getTexMetrics as getNaturalTexMetrics} from './getTexMetrics';
 
 // True inside <Text> (reset by nested <View>) — "am I an inline attachment".
 // Native code can't tell: Android Fabric hoists inline views into the text's
@@ -43,8 +46,34 @@ export function RaTeXProvider({
   );
 }
 
-/** Instance handle of the underlying native view (measure, measureInWindow, …). */
-export type RaTeXViewRef = React.ComponentRef<typeof RaTeXViewNativeComponent>;
+/**
+ * `depth` is DRAWN (fit-scale and centering gap applied — never multiply by
+ * `scale`); `width`/`height` are NATURAL ink size; `scale` bridges the two.
+ */
+export interface RaTeXTexMetrics {
+  /** View bottom edge → drawn ink baseline, dp. */
+  depth: number;
+  /** Fit scale k (≤ 1). */
+  scale: number;
+  /** Natural ink width, dp. */
+  width: number;
+  /** Natural ink height, dp. */
+  height: number;
+}
+
+type NativeRaTeXViewInstance = React.ComponentRef<
+  typeof RaTeXViewNativeComponent
+>;
+
+/** The genuine host instance (measure, …) plus `getTexMetrics()`. */
+export type RaTeXViewRef = NativeRaTeXViewInstance & {
+  /**
+   * Sync TeX metrics at the committed layout (parse-cache-backed); null when
+   * unmounted, empty, or parse failed. Call from `useLayoutEffect` or later.
+   * Old arch: `measure` is async there, so metrics assume natural size.
+   */
+  getTexMetrics(): RaTeXTexMetrics | null;
+};
 
 export interface RaTeXViewProps {
   latex: string;
@@ -99,6 +128,59 @@ export function RaTeXView({
   } | null>(null);
   const resolvedColor = color ?? inheritedColor;
 
+  const nativeRef = useRef<NativeRaTeXViewInstance | null>(null);
+
+  const getTexMetrics = useCallback((): RaTeXTexMetrics | null => {
+    const node = nativeRef.current;
+    const natural = getNaturalTexMetrics(
+      latex,
+      fontSize,
+      displayMode,
+      resolvedColor,
+    );
+    if (!node || !natural || natural.width <= 0 || natural.height <= 0) {
+      return null;
+    }
+    // Sync on Fabric; async on old arch → frame stays 0,0 → scale 1, no gap.
+    let frameWidth = 0;
+    let frameHeight = 0;
+    node.measure((_x, _y, width, height) => {
+      frameWidth = width;
+      frameHeight = height;
+    });
+    // Mirrors the native drawing/baseline() math (fit-scale k + centering
+    // gap); pixel snapping and optical raise are host calibration, left out.
+    let scale = 1;
+    let gap = 0;
+    if (frameWidth > 0 && frameHeight > 0) {
+      scale = Math.min(
+        1,
+        frameWidth / natural.width,
+        frameHeight / natural.height,
+      );
+      gap = Math.max(0, (frameHeight - natural.height * scale) / 2);
+    }
+    return {
+      depth: gap + Math.max(0, natural.depth) * scale,
+      scale,
+      width: natural.width,
+      height: natural.height,
+    };
+  }, [latex, fontSize, displayMode, resolvedColor]);
+
+  // Exposes the GENUINE host instance, augmented with getTexMetrics (child
+  // refs attach before createHandle runs) — not a wrapper object, so host
+  // identity, findNodeHandle, and every host method survive.
+  useImperativeHandle(
+    ref,
+    () => {
+      const node = nativeRef.current as RaTeXViewRef;
+      node.getTexMetrics = getTexMetrics;
+      return node;
+    },
+    [getTexMetrics],
+  );
+
   // Old architecture only (contentSize is never set on Fabric): when inputs
   // change, drop the cached measurement so the view can shrink/grow instead of
   // keeping a stale width/height until the next event arrives.
@@ -146,7 +228,7 @@ export function RaTeXView({
 
   return (
     <RaTeXViewNativeComponent
-      ref={ref}
+      ref={nativeRef}
       latex={latex}
       fontSize={fontSize}
       displayMode={displayMode}
