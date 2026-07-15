@@ -69,6 +69,11 @@ class RaTeXViewManager(private val reactContext: ReactApplicationContext) :
         view.displayMode = value
     }
 
+    @ReactProp(name = "inlineAlign")
+    override fun setInlineAlign(view: RaTeXView, value: String?) {
+        view.inlineAlign = value ?: "none"
+    }
+
     @ReactProp(name = "color", customType = "Color")
     override fun setColor(view: RaTeXView, value: Int?) {
         view.color = value ?: Color.BLACK
@@ -107,7 +112,16 @@ class RaTeXViewManager(private val reactContext: ReactApplicationContext) :
             val density = context.resources.displayMetrics.density
             val displayList = RaTeXEngine.parseCached(latex, displayMode, color)
             val renderer = RaTeXRenderer(displayList, fontSize * density)
-            YogaMeasureOutput.make(renderer.widthPx / density, renderer.totalHeightPx / density)
+            // Inside <Text> (inlineAlign is only ever set there) the text engine
+            // reserves the whole height as line ascent — report the ascent-only
+            // box; the view draws natural-size ink bottom-anchored (RaTeXView).
+            val heightPx =
+                if (props?.getString("inlineAlign") == "baseline") {
+                    renderer.heightPx // ascent only — ink baseline to ink top
+                } else {
+                    renderer.totalHeightPx
+                }
+            YogaMeasureOutput.make(renderer.widthPx / density, heightPx / density)
         } catch (e: Throwable) {
             YogaMeasureOutput.make(0f, 0f)
         }

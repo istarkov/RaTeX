@@ -10,6 +10,7 @@
 #import <react/renderer/components/RNRaTeXSpec/RCTComponentViewHelpers.h>
 #import <react/renderer/core/LayoutConstraints.h>
 #import <react/renderer/core/LayoutContext.h>
+#include <algorithm>
 #include <cmath>
 #else
 #import "RaTeXViewManager.h"
@@ -64,6 +65,7 @@ class RaTeXViewMeasuringShadowNode final : public RaTeXViewShadowNode {
     auto traits = RaTeXViewShadowNode::BaseTraits();
     traits.set(ShadowNodeTraits::Trait::LeafYogaNode);
     traits.set(ShadowNodeTraits::Trait::MeasurableYogaNode);
+    traits.set(ShadowNodeTraits::Trait::BaselineYogaNode);
     return traits;
   }
 
@@ -77,16 +79,67 @@ class RaTeXViewMeasuringShadowNode final : public RaTeXViewShadowNode {
     if (latex == nil) {
       return layoutConstraints.clamp(facebook::react::Size{0, 0});
     }
-    CGSize measured = [RaTeXMeasure measureLatex:latex
-                                        fontSize:static_cast<CGFloat>(props.fontSize)
-                                     displayMode:props.displayMode ? YES : NO];
+    RaTeXTexMetrics *metrics = [RaTeXMeasure metricsLatex:latex
+                                                 fontSize:static_cast<CGFloat>(props.fontSize)
+                                              displayMode:props.displayMode ? YES : NO];
+    if (metrics == nil) {
+      return layoutConstraints.clamp(facebook::react::Size{0, 0});
+    }
+    Float measuredHeight = static_cast<Float>(metrics.height);
+    // Inside <Text> (inlineAlign is only ever set there) the text engine pins the
+    // view bottom to the baseline and reserves the whole height as line ASCENT.
+    // Report the ascent-only box (height − depth) so the line above gets the same
+    // spacing a baseline-aligned flex row produces; the view draws its natural-size
+    // ink anchored to the bottom, descender overflowing (RaTeXRNView).
+    if (props.inlineAlign == RaTeXViewInlineAlign::Baseline) {
+      measuredHeight -= static_cast<Float>(metrics.depth);
+    }
     // Snap up to the pixel grid so Yoga's position-dependent edge rounding can't vary the
     // reported height across placements of the same formula. Uses Yoga's own scale factor.
     Float scale = layoutContext.pointScaleFactor > 0 ? layoutContext.pointScaleFactor : 1;
-    Float width = std::ceil(static_cast<Float>(measured.width) * scale) / scale;
-    Float height = std::ceil(static_cast<Float>(measured.height) * scale) / scale;
+    Float width = std::ceil(static_cast<Float>(metrics.width) * scale) / scale;
+    Float height = std::ceil(measuredHeight * scale) / scale;
     facebook::react::Size size{width, height};
     return layoutConstraints.clamp(size);
+  }
+
+  // The drawn formula's alphabetic baseline, so `alignItems: 'baseline'` lines the
+  // formula up with sibling <Text> exactly like a glyph. Mirrors the view's
+  // fit-scale/centering draw math against the engine's natural metrics.
+  Float baseline(const LayoutContext &layoutContext, facebook::react::Size size) const override {
+    const auto &props = getConcreteProps();
+    // Yoga's default for a node without a real baseline is its bottom edge.
+    const Float fallback = size.height;
+    if (props.latex.empty() || props.fontSize <= 0) {
+      return fallback;
+    }
+    NSString *latex = [NSString stringWithUTF8String:props.latex.c_str()];
+    if (latex == nil) {
+      return fallback;
+    }
+    RaTeXTexMetrics *metrics = [RaTeXMeasure metricsLatex:latex
+                                                 fontSize:static_cast<CGFloat>(props.fontSize)
+                                              displayMode:props.displayMode ? YES : NO];
+    if (metrics == nil) {
+      return fallback;
+    }
+    const Float naturalWidth = static_cast<Float>(metrics.width);
+    const Float naturalHeight = static_cast<Float>(metrics.height);
+    const Float depth = static_cast<Float>(metrics.depth);
+    if (naturalWidth <= 0 || naturalHeight <= 0) {
+      return fallback;
+    }
+    const Float scale = std::min(
+        Float(1), std::min(size.width / naturalWidth, size.height / naturalHeight));
+    const Float dy = std::max(Float(0), (size.height - naturalHeight * scale) / 2);
+    // Exact drawn ink baseline, snapped to the PIXEL grid (whole-point flooring
+    // made the raise vary 0..1pt per formula), +1px uniform optical raise
+    // (a larger reported baseline moves the child up). RaTeXRNView.inlineShift
+    // applies the same rule inside <Text>.
+    const Float pixelScale =
+        layoutContext.pointScaleFactor > 0 ? layoutContext.pointScaleFactor : 1;
+    const Float inkBaseline = dy + naturalHeight * scale - depth * scale;
+    return std::round(inkBaseline * pixelScale) / pixelScale + 1 / pixelScale;
   }
 };
 
@@ -172,6 +225,15 @@ using RaTeXViewMeasuringComponentDescriptor =
     _nativeView.displayMode = displayMode;
   }
 
+  // Derived from style.alignSelf by RaTeXView.tsx; drives the native in-<Text>
+  // vertical alignment shift (see RaTeXRNView.inlineAlign — applied only when
+  // the view detects a text host, so flex-sibling alignment stays pure Yoga).
+  NSString *inlineAlign =
+      [NSString stringWithUTF8String:toString(newProps.inlineAlign).c_str()];
+  if (![inlineAlign isEqualToString:_nativeView.inlineAlign]) {
+    _nativeView.inlineAlign = inlineAlign;
+  }
+
 #if TARGET_OS_OSX
   NSColor *color = RaTeXPlatformColorFromSharedColor(newProps.color);
 #else
@@ -225,6 +287,7 @@ RCT_EXPORT_MODULE(RaTeXView)
 RCT_EXPORT_VIEW_PROPERTY(latex, NSString)
 RCT_EXPORT_VIEW_PROPERTY(fontSize, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(displayMode, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(inlineAlign, NSString)
 #if TARGET_OS_OSX
 RCT_EXPORT_VIEW_PROPERTY(color, NSColor)
 #else

@@ -11,6 +11,7 @@ import androidx.annotation.ColorInt
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +86,20 @@ class RaTeXView @JvmOverloads constructor(
             rerender()
         }
 
+    /**
+     * Vertical alignment against a host text line that pins the view bottom to the
+     * text baseline (React Native's `<Text>`): "baseline" | "center" | "start" |
+     * "end" | "none". RN sets it from `style.alignSelf`, only under a <Text>
+     * ancestor. Applied via [setTranslationY] — an RN `transform` style would
+     * conflict; don't combine the two on an inline formula.
+     */
+    var inlineAlign: String = "none"
+        set(value) {
+            if (field == value) return
+            field = value
+            applyInlineShift()
+        }
+
     /** Called on the main thread when a render error occurs. */
     var onError: ((RaTeXException) -> Unit)? = null
 
@@ -151,6 +166,22 @@ class RaTeXView @JvmOverloads constructor(
         val contentW = r.widthPx
         val contentH = r.totalHeightPx
 
+        if (inlineAlign == "baseline") {
+            // The frame is the ASCENT-ONLY box (measure reported height − depth):
+            // draw natural-size ink with its baseline on the view bottom, the
+            // descender overflowing below — no clip, height doesn't constrain.
+            val k = if (contentW > 0f) min(1f, availW / contentW) else 1f
+            canvas.save()
+            canvas.translate(
+                paddingLeft.toFloat(),
+                paddingTop + availH - r.heightPx * k,
+            )
+            canvas.scale(k, k)
+            r.draw(canvas)
+            canvas.restore()
+            return
+        }
+
         // Clip to the view bounds so explicit style sizes behave predictably.
         canvas.save()
         canvas.clipRect(0, 0, width, height)
@@ -170,6 +201,27 @@ class RaTeXView @JvmOverloads constructor(
         canvas.scale(scale, scale)
         r.draw(canvas)
         canvas.restore()
+    }
+
+    /**
+     * The drawn formula's alphabetic baseline, for baseline-aligning native layouts
+     * (LinearLayout etc.). Mirrors [onDraw]'s fit-scale/centering math so the
+     * reported baseline always matches the ink actually painted.
+     */
+    override fun getBaseline(): Int {
+        val r = renderer ?: return -1
+        val availW = (width - paddingLeft - paddingRight).toFloat().coerceAtLeast(0f)
+        val availH = (height - paddingTop - paddingBottom).toFloat().coerceAtLeast(0f)
+        val contentW = r.widthPx
+        val contentH = r.totalHeightPx
+        if (contentW <= 0f || contentH <= 0f) return -1
+        if (inlineAlign == "baseline") {
+            // Ascent-only frame: the drawn ink baseline sits on the view bottom.
+            return (paddingTop + availH).roundToInt()
+        }
+        val scale = min(1f, min(availW / contentW, availH / contentH))
+        val dy = paddingTop + ((availH - contentH * scale) / 2f).coerceAtLeast(0f)
+        return (dy + r.heightPx * scale).roundToInt()
     }
 
     // MARK: - Lifecycle
@@ -192,6 +244,52 @@ class RaTeXView @JvmOverloads constructor(
         if (renderer == null && latex.isNotBlank() && renderJob?.isActive != true) rerender()
     }
 
+    /**
+     * See [inlineAlign]: downward translation (px) of the view against the host
+     * text's bottom-on-baseline placement. Mirrors [onDraw]'s fit-scale (`k`) +
+     * centering gap (`g`) so a clamped/scaled box still anchors correctly.
+     */
+    private fun applyInlineShift() {
+        translationY = computeInlineShiftPx()
+    }
+
+    private fun computeInlineShiftPx(): Float {
+        if (inlineAlign == "none") return 0f
+        val r = renderer ?: return 0f
+        val contentW = r.widthPx
+        val contentH = r.totalHeightPx
+        if (contentW <= 0f || contentH <= 0f) return 0f
+        val density = context.resources.displayMetrics.density
+        val availW = (width - paddingLeft - paddingRight).toFloat().coerceAtLeast(0f)
+        val availH = (height - paddingTop - paddingBottom).toFloat().coerceAtLeast(0f)
+        var k = 1f
+        var g = 0f
+        if (availW > 0f && availH > 0f) {
+            k = min(1f, min(availW / contentW, availH / contentH))
+            g = ((availH - contentH * k) / 2f).coerceAtLeast(0f)
+        }
+        val inkHeightPx = contentH * k
+        val shiftPx = when (inlineAlign) {
+            // "baseline" needs no translate: measure reports the ascent-only box
+            // and onDraw bottom-anchors the ink — only the optical raise remains.
+            // center/start/end use em fractions assuming host text at [fontSize]
+            // (math axis 0.25em, line box 0.75/0.25em).
+            "baseline" -> 0f
+            "center" -> g + inkHeightPx / 2f - 0.25f * fontSize * density
+            "start" -> g + inkHeightPx - 0.75f * fontSize * density
+            "end" -> g + 0.25f * fontSize * density
+            else -> return 0f
+        }
+        // Pixel-snap, then the same 1px optical raise as the shadow baseline().
+        return shiftPx.roundToInt() - 1f
+    }
+
+    /** The inline shift depends on the laid-out size (fit-scale, centering gap). */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        applyInlineShift()
+    }
+
     // MARK: - Private
 
     private fun rerender() {
@@ -199,6 +297,7 @@ class RaTeXView @JvmOverloads constructor(
         renderJob = null
         if (latex.isBlank()) {
             renderer = null
+            applyInlineShift()
             requestSelfLayout()
             invalidate()
             return
@@ -260,6 +359,7 @@ class RaTeXView @JvmOverloads constructor(
         val density = context.resources.displayMetrics.density
         val r = RaTeXRenderer(dl, fontSize * density) { RaTeXFontLoader.getTypeface(it) }
         renderer = r
+        applyInlineShift()
         requestSelfLayout()
         invalidate()
         val widthDp = r.widthPx / density

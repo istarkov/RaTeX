@@ -18,6 +18,8 @@ inline folly::dynamic toDynamic(const RaTeXViewProps& props) {
     // On Android, Color is the ARGB int32 — same representation Kotlin uses.
     serializedProps["color"] = *props.color;
   }
+  // "baseline" switches measure to the ascent-only box (see RaTeXViewManager.kt).
+  serializedProps["inlineAlign"] = toString(props.inlineAlign);
   return serializedProps;
 }
 

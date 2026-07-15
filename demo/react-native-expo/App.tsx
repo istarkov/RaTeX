@@ -15,6 +15,8 @@
 
 import { StatusBar } from "expo-status-bar";
 import { useState, useCallback, useLayoutEffect, useRef } from "react";
+import type { ReactNode } from "react";
+import type { ViewStyle } from "react-native";
 import {
   StyleSheet,
   Text,
@@ -25,7 +27,8 @@ import {
   useWindowDimensions,
   ScrollView,
 } from "react-native";
-import { InlineTeX, RaTeXView } from "ratex-react-native";
+import { InlineTeX, RaTeXView, getTexMetrics } from "ratex-react-native";
+import type { RaTeXTexMetrics, RaTeXViewRef } from "ratex-react-native";
 
 const EXPR = String.raw`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`;
 const EXPR2 = String.raw`\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}`;
@@ -614,6 +617,677 @@ function CaseInlineTeXCustomFont() {
   );
 }
 
+// ─── Inline baseline: RaTeXView in <Text> vs alignItems:'baseline' row ──
+//
+// Two embeddings of the same `$…$` fixtures, both using RaTeXView only:
+//
+// Red border — formulas embedded in <Text>: RN places an inline view with its
+// BOTTOM on the text baseline, so any formula with descent ($y$, $y_i$,
+// $\frac{a}{b}$…) floats UP by exactly that descent (current default).
+//
+// Blue border — word-level <Text> and RaTeXView siblings in a wrapping flex row
+// with alignItems:'baseline': Yoga aligns children by baseline. Text provides a
+// real one (ParagraphShadowNode::baseline); RaTeXView does not yet, so Yoga
+// falls back to its bottom edge and the row shows the SAME float-up — until the
+// native shadow-node baseline() lands, after which blue rows must align
+// perfectly (the descender-twins line makes it obvious).
+const INLINE_BASELINE_FONT_SIZE = 16;
+const INLINE_BASELINE_PARAS = [
+  String.raw`No descent at all: $x^2 + 1$ and $a + b = c$ should sit exactly like words.`,
+  String.raw`Descender twins — compare y with $y$, p with $p$, g with $g$, q with $q$ in one line.`,
+  String.raw`Subscripts hang below: $y_i$, deeper $a_{i_j}$, and chained $x_{n+1} = x_n - f(x_n)/f'(x_n)$ mid-sentence.`,
+  String.raw`A fraction $\frac{a}{b}$ between words, a taller one $\frac{x^2+1}{x-1}$ next, and the quadratic $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$ to finish the line.`,
+  String.raw`Radicals: plain $\sqrt{2}$, stacked $\sqrt{1 + \sqrt{x}}$, and with a descender inside $\sqrt{y_j}$.`,
+  String.raw`Operators stay inline-styled: sum $\sum_{n=1}^{\infty} \frac{1}{n^2}$, integral $\int_0^1 x\,dx$, limit $\lim_{x \to 0} \frac{\sin x}{x} = 1$.`,
+  String.raw`Tall ascent, no descent: $e^{x^2}$ and $2^{2^n}$ should not float above the line.`,
+  String.raw`Big delimiters both ways: $\left(\frac{1}{1+x}\right)^2$ and $\left[\sum_k a_k\right]$ inside running text.`,
+];
+
+/** Renders a `$…$` paragraph as RN <Text> with RaTeXView children — the way a
+ * markdown renderer embeds formulas. With alignSelf:'baseline' in the style
+ * the view translates itself down by the engine-exact descent (sync metrics,
+ * no probes) — the same style that baseline-aligns it as a flex sibling. */
+function InlineDefaultParagraph({
+  source,
+  alignBaseline,
+}: {
+  source: string;
+  alignBaseline?: boolean;
+}) {
+  // Even indices are plain text, odd indices are formula bodies.
+  const parts = source.split(/\$([^$]+)\$/g);
+  return (
+    <Text selectable style={styles.inlineParaText}>
+      {parts.map((part, i) =>
+        i % 2 === 0 ? (
+          part
+        ) : (
+          <RaTeXView
+            key={i}
+            latex={part}
+            fontSize={INLINE_BASELINE_FONT_SIZE}
+            displayMode={false}
+            style={alignBaseline ? { alignSelf: "baseline" } : undefined}
+            color="#111827"
+          />
+        )
+      )}
+    </Text>
+  );
+}
+
+/** The same `$…$` paragraph as a wrapping flex row under alignItems:'baseline':
+ * every word is its own <Text> sibling so Yoga (not the text engine) owns
+ * placement and aligns each child by its baseline. */
+function InlineBaselineRowParagraph({ source }: { source: string }) {
+  const parts = source.split(/\$([^$]+)\$/g);
+  const children: ReactNode[] = [];
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) {
+      children.push(
+        <RaTeXView
+          key={`m${i}`}
+          latex={part}
+          fontSize={INLINE_BASELINE_FONT_SIZE}
+          displayMode={false}
+          color="#111827"
+        />
+      );
+      return;
+    }
+    for (const [j, word] of part.split(/\s+/).filter(Boolean).entries()) {
+      children.push(
+        <Text selectable key={`t${i}-${j}`} style={styles.inlineParaText}>
+          {word}
+        </Text>
+      );
+    }
+  });
+  return <View style={styles.inlineBaselineRow}>{children}</View>;
+}
+
+function CaseInlineBaseline() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>
+          Inline baseline: {"<Text>"} embed vs alignItems:'baseline'
+        </Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        Amber and blue should match; red floats up. Watch the descender-twins
+        line.
+      </Text>
+      <View style={styles.inlineLegend}>
+        <Text style={[styles.inlineLegendLine, { color: "#ef4444" }]}>
+          {"<Text>bla <RaTeXView/> bla</Text>"}
+        </Text>
+        <Text style={[styles.inlineLegendLine, { color: "#f59e0b" }]}>
+          {"<Text>bla <RaTeXView style={{alignSelf:'baseline'}}/> bla</Text>"}
+        </Text>
+        <Text style={[styles.inlineLegendLine, { color: "#3b82f6" }]}>
+          {"<View style={{flexDirection:'row', alignItems:'baseline'}}>\n  <Text>bla</Text> <RaTeXView/> ...\n</View>"}
+        </Text>
+      </View>
+      <View style={styles.inlineBody}>
+        {INLINE_BASELINE_PARAS.map((para, i) => (
+          <View key={i} style={styles.inlinePair}>
+            <View style={[styles.inlineRow, styles.inlineRowDefault]}>
+              <InlineDefaultParagraph source={para} />
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowAligned]}>
+              <InlineDefaultParagraph source={para} alignBaseline />
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowBaseline]}>
+              <InlineBaselineRowParagraph source={para} />
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── Baseline with a text line ABOVE the math line (3-line paragraphs) ────────
+//
+// Same three variants as the inline-baseline card, but each paragraph opens
+// with a plain-text line, so the math line has a text neighbor above AND below.
+// Exposes what the alignment approach does to interline spacing around a tall
+// aligned formula.
+const NEIGHBOR_PARAS = [
+  String.raw`This opening line is plain running. Big delimiters both ways: $\left(\frac{1}{1+x}\right)^2$ and $\left[\sum_k a_k\right]$ inside running text.`,
+  String.raw`This opening line is plain running. Big delimiters both ways: $\left[\sum_k a_k\right]$ inside running text.`,
+];
+
+function CaseInlineBaselineNeighbors() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>
+          Baseline with a plain text line above (3-line wrap)
+        </Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        Line 1 is text only; the tall formulas sit on line 2. Compare the
+        spacing between lines 1–2 and 2–3 across the three variants.
+      </Text>
+      <View style={styles.inlineBody}>
+        {NEIGHBOR_PARAS.map((para, i) => (
+          <View key={i} style={styles.inlinePair}>
+            <View style={[styles.inlineRow, styles.inlineRowDefault]}>
+              <InlineDefaultParagraph source={para} />
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowAligned]}>
+              <InlineDefaultParagraph source={para} alignBaseline />
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowBaseline]}>
+              <InlineBaselineRowParagraph source={para} />
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── KNOWN ISSUE (not fixable): deep descender overdraws the next line ───────
+//
+// RN's text engine reserves only the run font's descender BELOW the baseline —
+// an inline view has no way to ask for more (the attachment protocol carries no
+// depth). A formula whose descent far exceeds the text descender therefore
+// overdraws the following line in <Text> (amber), while a baseline flex row
+// reserves the full depth and pushes the next line down (blue). Fixing this
+// needs RN itself to learn attachment depth; everything above the baseline IS
+// fixed (ascent-only measure).
+const DEEP_PARAS = [
+  String.raw`This opening line is plain running text with no math in it at all. A very deep tail mid-line: $x = \cfrac{1}{2+\cfrac{1}{3+\cfrac{1}{4+y}}}$ splits the sentence, and this trailing text wraps onto the line right below the formula's descender.`,
+];
+
+function CaseDeepDescenderOverdraw() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>
+          Known issue (not fixable): deep descender overdraws the next line
+        </Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        The continued fraction descends far below the text descender. Amber
+        (in-Text): RN reserves only the font descender below the baseline, so
+        the tail overdraws line 3. Blue (flex): the row reserves the full depth
+        and line 3 moves down. Needs RN-side attachment depth to fix.
+      </Text>
+      <View style={styles.inlineBody}>
+        {DEEP_PARAS.map((para, i) => (
+          <View key={i} style={styles.inlinePair}>
+            <View style={[styles.inlineRow, styles.inlineRowAligned]}>
+              <InlineDefaultParagraph source={para} alignBaseline />
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowBaseline]}>
+              <InlineBaselineRowParagraph source={para} />
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── In-<Text> alignSelf options: none / baseline / center / start / end ─────
+//
+// Inside <Text> the text engine pins an inline view's bottom to the baseline;
+// the native view then offsets its own ink per style.alignSelf: 'baseline' is
+// engine-exact, 'center' centers the box on the TeX math axis, 'flex-start' /
+// 'flex-end' approximate text-top / text-bottom from the em. Same sentence per
+// row — only alignSelf on the formulas changes.
+const INLINE_ALIGN_OPTIONS = [
+  undefined,
+  "baseline",
+  "center",
+  "flex-start",
+  "flex-end",
+] as const;
+
+function CaseInlineAlignOptions() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>In-Text alignSelf options</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        One sentence per option — only style.alignSelf on the formulas changes.
+      </Text>
+      <View style={styles.inlineBody}>
+        {INLINE_ALIGN_OPTIONS.map((align) => (
+          <View key={align ?? "none"} style={styles.inlinePair}>
+            <Text style={[styles.inlineLegendLine, { color: "#6b7280" }]}>
+              {align ? `alignSelf: '${align}'` : "(no alignSelf)"}
+            </Text>
+            <Text style={styles.inlineParaText}>
+              gap py{" "}
+              <RaTeXView
+                latex={String.raw`\sqrt{y_j}`}
+                fontSize={INLINE_BASELINE_FONT_SIZE}
+                displayMode={false}
+                style={align ? { alignSelf: align } : undefined}
+                color="#111827"
+              />{" "}
+              mid{" "}
+              <RaTeXView
+                latex={String.raw`\frac{x^2+1}{x-1}`}
+                fontSize={INLINE_BASELINE_FONT_SIZE}
+                displayMode={false}
+                style={align ? { alignSelf: align } : undefined}
+                color="#111827"
+              />{" "}
+              end gy
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── Baseline × font size mix: alignment must be fontSize-independent ─────
+//
+// The shift is computed from the formula's own metrics at its own fontSize, so
+// it must hold when text and math sizes differ (the text engine pins the view
+// bottom to the baseline regardless of either size). Amber (in <Text>) and
+// blue (flex baseline row) must match in every combination.
+const FONT_MIX_CASES = [
+  { label: "text 32 / math 32", text: 32, math: 32 },
+  { label: "text 32 / math 16", text: 32, math: 16 },
+  { label: "text 16 / math 32", text: 16, math: 32 },
+];
+
+function CaseInlineFontMix() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>Baseline × font size mix</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        alignSelf:'baseline' with differing text/math sizes — amber and blue
+        must match in every combination.
+      </Text>
+      <View style={styles.inlineBody}>
+        {FONT_MIX_CASES.map(({ label, text, math }) => (
+          <View key={label} style={styles.inlinePair}>
+            <Text style={[styles.inlineLegendLine, { color: "#6b7280" }]}>
+              {label}
+            </Text>
+            <View style={[styles.inlineRow, styles.inlineRowAligned]}>
+              <Text style={[styles.inlineParaText, { fontSize: text }]}>
+                gap py{" "}
+                <RaTeXView
+                  latex={String.raw`\sqrt{y_j}`}
+                  fontSize={math}
+                  displayMode={false}
+                  style={{ alignSelf: "baseline" }}
+                  color="#111827"
+                />{" "}
+                mid{" "}
+                <RaTeXView
+                  latex={String.raw`\frac{x^2+1}{x-1}`}
+                  fontSize={math}
+                  displayMode={false}
+                  style={{ alignSelf: "baseline" }}
+                  color="#111827"
+                />{" "}
+                end gy
+              </Text>
+            </View>
+            <View style={[styles.inlineRow, styles.inlineRowBaseline]}>
+              <View style={styles.inlineBaselineRow}>
+                <Text style={[styles.inlineParaText, { fontSize: text }]}>
+                  gap py
+                </Text>
+                <RaTeXView
+                  latex={String.raw`\sqrt{y_j}`}
+                  fontSize={math}
+                  displayMode={false}
+                  color="#111827"
+                />
+                <Text style={[styles.inlineParaText, { fontSize: text }]}>
+                  mid
+                </Text>
+                <RaTeXView
+                  latex={String.raw`\frac{x^2+1}{x-1}`}
+                  fontSize={math}
+                  displayMode={false}
+                  color="#111827"
+                />
+                <Text style={[styles.inlineParaText, { fontSize: text }]}>
+                  end gy
+                </Text>
+              </View>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── maxWidth autoscaling × baseline ─────
+//
+// A width-clamped formula downscales its ink (fit-scale, never up) and centers
+// it inside the assigned box, so the ink baseline moves: the in-<Text> shift
+// must anchor the SCALED ink baseline plus the centering gap, and the flex
+// baseline() mirrors the same fit math. Control (unclamped) rows first.
+const MAXW_LATEX = String.raw`x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}`;
+
+function MaxWidthPair({
+  label,
+  maxWidth,
+}: {
+  label: string;
+  maxWidth?: number;
+}) {
+  return (
+    <View style={styles.inlinePair}>
+      <Text style={[styles.inlineLegendLine, { color: "#6b7280" }]}>
+        {label}
+      </Text>
+      <View style={[styles.inlineRow, styles.inlineRowAligned]}>
+        <Text style={styles.inlineParaText}>
+          gap py{" "}
+          <RaTeXView
+            latex={MAXW_LATEX}
+            fontSize={INLINE_BASELINE_FONT_SIZE}
+            displayMode={false}
+            style={{ alignSelf: "baseline", maxWidth }}
+            color="#111827"
+          />{" "}
+          end gy
+        </Text>
+      </View>
+      <View style={[styles.inlineRow, styles.inlineRowBaseline]}>
+        <View style={styles.inlineBaselineRow}>
+          <Text style={styles.inlineParaText}>gap py</Text>
+          <RaTeXView
+            latex={MAXW_LATEX}
+            fontSize={INLINE_BASELINE_FONT_SIZE}
+            displayMode={false}
+            style={{ maxWidth }}
+            color="#111827"
+          />
+          <Text style={styles.inlineParaText}>end gy</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function CaseInlineMaxWidth() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>maxWidth autoscaling × baseline</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        The clamped formula scales its ink down; the scaled baseline must still
+        sit on the text baseline in both host contexts.
+      </Text>
+      <View style={styles.inlineBody}>
+        <MaxWidthPair label="no clamp (control)" />
+        <MaxWidthPair label="maxWidth: 90 (≈0.6× ink scale)" maxWidth={90} />
+        <MaxWidthPair label="maxWidth: 60 (≈0.4× ink scale)" maxWidth={60} />
+      </View>
+    </View>
+  );
+}
+
+// ─── Yoga alignment variants: RaTeXView as a regular flex child ─────
+//
+// The shadow-node baseline() only changes what `baseline` alignment sees; every
+// other align value must keep its usual Yoga meaning. One row per value, with a
+// short-and-deep formula ($y_j$) and a tall fraction between text runs whose
+// descenders (g, p, y) make the baseline row easy to judge. The last row uses
+// alignSelf: 'baseline' per child (container centers) — per-child opt-in works
+// the same way as container-level alignItems.
+// Narrow style type: the RaTeXView style prop resolves against the symlinked
+// library's own react-native types, which structurally clash with the demo's on
+// unrelated fields (boxShadow) — a subset type is assignable to both.
+type ChildAlign = {
+  alignSelf?: "auto" | "flex-start" | "flex-end" | "center" | "stretch" | "baseline";
+};
+
+const ALIGN_SAMPLES: {
+  label: string;
+  container: ViewStyle;
+  child?: ChildAlign;
+}[] = [
+  { label: "alignItems: 'flex-start'", container: { alignItems: "flex-start" } },
+  { label: "alignItems: 'center'", container: { alignItems: "center" } },
+  { label: "alignItems: 'flex-end'", container: { alignItems: "flex-end" } },
+  { label: "alignItems: 'baseline'", container: { alignItems: "baseline" } },
+  {
+    label: "alignSelf: 'baseline' on each child, container centers",
+    container: { alignItems: "center" },
+    child: { alignSelf: "baseline" },
+  },
+];
+
+function AlignSampleRow({
+  container,
+  child,
+}: {
+  container: ViewStyle;
+  child?: ChildAlign;
+}) {
+  return (
+    <View style={[styles.alignRow, container]}>
+      <Text style={[styles.inlineParaText, child]}>gap py</Text>
+      <RaTeXView
+        latex="y_j"
+        fontSize={INLINE_BASELINE_FONT_SIZE}
+        displayMode={false}
+        color="#111827"
+        style={child}
+      />
+      <Text style={[styles.inlineParaText, child]}>mid</Text>
+      <RaTeXView
+        latex={String.raw`\frac{x^2+1}{x-1}`}
+        fontSize={INLINE_BASELINE_FONT_SIZE}
+        displayMode={false}
+        color="#111827"
+        style={child}
+      />
+      <Text style={[styles.inlineParaText, child]}>end g</Text>
+    </View>
+  );
+}
+
+function CaseYogaAligns() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>Yoga aligns: RaTeXView as flex child</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        Each row is flexDirection:'row' with the align value below it. The tall
+        fraction gives the row height contrast; 'baseline' (and per-child
+        alignSelf:'baseline') should line the formulas up with the text like
+        glyphs, the rest keep their usual box meaning.
+      </Text>
+      <View style={styles.inlineBody}>
+        {ALIGN_SAMPLES.map((sample) => (
+          <View key={sample.label}>
+            <AlignSampleRow container={sample.container} child={sample.child} />
+            <Text style={styles.alignLabel}>{sample.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── ref.getTexMetrics(): drawn ink baseline for custom hosts ────────────────
+//
+// Hosts that do their own layout (markdown engines placing formulas over a
+// custom text view, canvas typesetters) can't use flex baseline or <Text>.
+// getTexMetrics() hands them the placement numbers synchronously in
+// useLayoutEffect. The green ruler is positioned purely from the returned
+// depth — it must kiss the ink baseline at every clamp width, because depth
+// is DRAWN: fit-scale and centering gap for the committed frame are already
+// applied (drawnDepth = gap + naturalDepth × scale).
+const METRICS_LATEX = String.raw`\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}`;
+const METRICS_WIDTHS = [undefined, 200, 140, 90] as const;
+
+function TexMetricsRow({ maxWidth }: { maxWidth?: number }) {
+  const ref = useRef<RaTeXViewRef>(null);
+  const [probe, setProbe] = useState<{
+    metrics: RaTeXTexMetrics;
+    frameHeight: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const metrics = ref.current?.getTexMetrics();
+    let frameHeight = 0;
+    ref.current?.measure((_x, _y, _w, h) => {
+      frameHeight = h; // sync on Fabric
+    });
+    setProbe(metrics && frameHeight > 0 ? { metrics, frameHeight } : null);
+  }, [maxWidth]);
+
+  return (
+    <View style={styles.metricsRow}>
+      <View style={styles.metricsBox}>
+        <RaTeXView
+          ref={ref}
+          latex={METRICS_LATEX}
+          fontSize={24}
+          displayMode={false}
+          color="#111827"
+          style={{ alignSelf: "flex-start", maxWidth }}
+        />
+        {probe && (
+          <View
+            style={[
+              styles.metricsBaseline,
+              { top: probe.frameHeight - probe.metrics.depth },
+            ]}
+          />
+        )}
+      </View>
+      <Text style={styles.metricsLabel}>
+        {maxWidth ? `maxWidth ${maxWidth}` : "natural"}
+        {probe
+          ? ` · scale ${probe.metrics.scale.toFixed(2)} · depth ${probe.metrics.depth.toFixed(1)}`
+          : " · …"}
+      </Text>
+    </View>
+  );
+}
+
+function CaseTexMetrics() {
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>
+          ref.getTexMetrics(): ink baseline for custom hosts
+        </Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        The green ruler is placed only from getTexMetrics().depth (top =
+        frameHeight − depth). It must sit on the ink baseline in every row —
+        including the clamped ones, where the drawn depth shrinks with scale.
+      </Text>
+      <View style={styles.inlineBody}>
+        {METRICS_WIDTHS.map((w) => (
+          <TexMetricsRow key={w ?? "natural"} maxWidth={w} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ─── getTexMetrics() perf: uncached vs cached, N unique formulas ─────
+const PERF_SIZES = [10, 50, 100, 200];
+const PERF_REPS = 5;
+
+// Every formula has the SAME shape/size (unique only via the embedded
+// nonce/index digits) so per-formula cost is comparable across N.
+function makePerfFormulas(n: number, nonce: number): string[] {
+  return Array.from(
+    { length: n },
+    (_, i) =>
+      String.raw`\frac{${nonce}x_{${i}} + \sqrt{${(i % 7) + 2}}}{y^{${(i % 5) + 2}} - ${nonce}} + \sum_{k=1}^{${(i % 4) + 2}} k^{${(i % 3) + 2}}`,
+  );
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+type PerfRow = { n: number; uncachedMs: number; cachedMs: number; failed: number };
+
+function CaseTexMetricsPerf() {
+  const [rows, setRows] = useState<PerfRow[] | null>(null);
+  const nonceRef = useRef(1);
+
+  const run = useCallback(() => {
+    // Warmup: ramps the CPU governor and JIT before anything is timed.
+    for (const f of makePerfFormulas(100, nonceRef.current++)) {
+      getTexMetrics(f, 16, false);
+    }
+    const out: PerfRow[] = [];
+    for (const n of PERF_SIZES) {
+      const uncached: number[] = [];
+      const cached: number[] = [];
+      let failed = 0;
+      for (let rep = 0; rep < PERF_REPS; rep++) {
+        const formulas = makePerfFormulas(n, nonceRef.current++);
+        const t0 = performance.now();
+        for (const f of formulas) {
+          if (!getTexMetrics(f, 16, false)) failed++;
+        }
+        const t1 = performance.now();
+        for (const f of formulas) {
+          getTexMetrics(f, 16, false);
+        }
+        uncached.push(t1 - t0);
+        cached.push(performance.now() - t1);
+      }
+      out.push({
+        n,
+        uncachedMs: median(uncached),
+        cachedMs: median(cached),
+        failed,
+      });
+    }
+    setRows(out);
+  }, []);
+
+  return (
+    <View style={[styles.card, styles.inlineCard]}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>getTexMetrics() perf (global)</Text>
+      </View>
+      <Text style={styles.smokeHint}>
+        Warmup, then per N: 5 reps of (N unique formulas cold, same N again
+        cached); medians shown. Parse cache holds 128 entries — at N=200 the
+        second pass thrashes the LRU, so "cached" ≈ uncached there.
+      </Text>
+      <Pressable style={styles.button} onPress={run}>
+        <Text style={styles.buttonText}>Run perf test</Text>
+      </Pressable>
+      {rows && (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+          {rows.map((r) => (
+            <Text key={r.n} style={styles.perfLine}>
+              {`N=${String(r.n).padStart(3)}  uncached ${r.uncachedMs.toFixed(1)}ms (${(r.uncachedMs / r.n).toFixed(2)}/f)  cached ${r.cachedMs.toFixed(1)}ms (${(r.cachedMs / r.n).toFixed(3)}/f)${r.failed ? `  failed=${r.failed}` : ""}`}
+            </Text>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Case C: Explicit dimensions (control — should always work) ─────
 function CaseExplicit({ renderKey }: { renderKey: number }) {
   const [status, setStatus] = useState<"pending" | "ok" | "error">("pending");
@@ -672,6 +1346,15 @@ export default function App() {
         <CaseLayoutEffectMeasure />
         <CasePR45Smoke />
         <CaseInlineTeXCustomFont />
+        <CaseInlineBaseline />
+        <CaseInlineBaselineNeighbors />
+        <CaseDeepDescenderOverdraw />
+        <CaseInlineAlignOptions />
+        <CaseInlineFontMix />
+        <CaseInlineMaxWidth />
+        <CaseYogaAligns />
+        <CaseTexMetrics />
+        <CaseTexMetricsPerf />
 
         <View style={styles.cases}>
           <CaseFlexMinHeight renderKey={key} />
@@ -912,6 +1595,106 @@ const styles = StyleSheet.create({
   smokeFixedHost: {
     alignItems: "center",
     paddingBottom: 8,
+  },
+  inlineCard: {
+    flex: 0,
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 8,
+    paddingBottom: 12,
+  },
+  inlineBody: {
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  inlinePair: {
+    gap: 4,
+  },
+  inlineRow: {
+    borderLeftWidth: 3,
+    paddingLeft: 8,
+    paddingVertical: 2,
+  },
+  inlineRowDefault: {
+    borderLeftColor: "#ef4444",
+  },
+  inlineRowAligned: {
+    borderLeftColor: "#f59e0b",
+  },
+  inlineLegend: {
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    gap: 3,
+  },
+  inlineLegendLine: {
+    fontSize: 11,
+    fontFamily: "Menlo",
+  },
+  inlineRowBaseline: {
+    borderLeftColor: "#3b82f6",
+  },
+  inlineBaseLineText: {
+    alignItems: "baseline",
+  },
+  inlineBaselineRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    columnGap: 4,
+    rowGap: 2,
+  },
+  alignRow: {
+    flexDirection: "row",
+    columnGap: 6,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e7eb",
+  },
+  alignLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontFamily: "Menlo",
+    marginTop: 2,
+  },
+  metricsRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e7eb",
+  },
+  metricsBox: {
+    alignSelf: "flex-start",
+  },
+  metricsBaseline: {
+    position: "absolute",
+    left: -8,
+    right: -8,
+    height: 1,
+    backgroundColor: "#ffb981",
+  },
+  metricsLabel: {
+    fontSize: 11,
+    color: "#6b7280",
+    fontFamily: "Menlo",
+    marginTop: 4,
+  },
+  perfLine: {
+    fontSize: 11,
+    color: "#111827",
+    fontFamily: "Menlo",
+    marginTop: 4,
+  },
+  inlineParaText: {
+    fontSize: INLINE_BASELINE_FONT_SIZE,
+    // No lineHeight: RN iOS centers glyphs in a custom lineHeight via a
+    // baselineOffset the attachment placement ignores, sinking every inline
+    // view by (lineHeight - fontLineHeight) / 2 (RN core bug).
+    //
+    // overflow visible: RN <Text> defaults to overflow:'hidden', and on iOS
+    // the paragraph clips its inline-view attachments to its own bounds — a
+    // baseline-aligned formula whose descent exceeds the text descender (e.g.
+    // math bigger than text) would lose its ink below the last line.
+    overflow: "visible",
+    color: "#111827",
   },
   fontCard: {
     flex: 0,

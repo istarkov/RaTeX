@@ -18,6 +18,7 @@ class RaTeXViewMeasuringShadowNode final : public RaTeXViewShadowNode {
     auto traits = RaTeXViewShadowNode::BaseTraits();
     traits.set(ShadowNodeTraits::Trait::LeafYogaNode);
     traits.set(ShadowNodeTraits::Trait::MeasurableYogaNode);
+    traits.set(ShadowNodeTraits::Trait::BaselineYogaNode);
     return traits;
   }
 
@@ -27,6 +28,11 @@ class RaTeXViewMeasuringShadowNode final : public RaTeXViewShadowNode {
   Size measureContent(
       const LayoutContext& layoutContext,
       const LayoutConstraints& layoutConstraints) const override;
+
+  /// The drawn formula's alphabetic baseline, so `alignItems: 'baseline'` lines
+  /// the formula up with sibling <Text> exactly like a glyph. Mirrors the view's
+  /// fit-scale/centering draw math against the engine's natural metrics.
+  Float baseline(const LayoutContext& layoutContext, Size size) const override;
 
  private:
   std::shared_ptr<RaTeXViewMeasurementManager> measurementsManager_;

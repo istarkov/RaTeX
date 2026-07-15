@@ -54,6 +54,11 @@ class RaTeXViewManager(private val reactContext: ReactApplicationContext) :
         view.displayMode = value
     }
 
+    @ReactProp(name = "inlineAlign")
+    fun setInlineAlign(view: RaTeXView, value: String?) {
+        view.inlineAlign = value ?: "none"
+    }
+
     @ReactProp(name = "color", customType = "Color")
     fun setColor(view: RaTeXView, value: Int?) {
         view.color = value ?: Color.BLACK
